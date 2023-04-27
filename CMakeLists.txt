@@ -10,11 +10,12 @@
 cmake_minimum_required (VERSION 2.8.12)
 
 project(nng-adaptor-demo)
+add_definitions(-std=c++17)
 
 # Call this from your own project's makefile.
 find_package(nng CONFIG REQUIRED)
-
 find_package(Threads)
 
 add_executable(demo demo.cpp)
+target_include_directories(demo PUBLIC include)
 target_link_libraries(demo nng::nng)
