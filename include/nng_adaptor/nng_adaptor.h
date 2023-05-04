@@ -1,6 +1,7 @@
 #ifndef NNG_ADAPTOR_H_
 #define NNG_ADAPTOR_H_
 #include <nng_adaptor/deserializer.h>
+#include <nng_adaptor/serializer.h>
 
 #include <nng/nng.h>
 #include <nng/protocol/pubsub0/pub.h>
@@ -37,7 +38,7 @@ class Publisher {
                 << "nng_msg_append failed, " << nng_strerror(rv) << std::endl;
     }
 
-    std::string body = std::to_string(msg_entity);
+    std::string body = ToString(msg_entity);
     size_t size = body.size();
     nng_msg_append_u32(msg, size);
     nng_msg_append(msg, body.c_str(), size);
@@ -196,7 +197,7 @@ class NodeHandler {
     char* msg_content = (char*)nng_msg_body(msg);
     std::string content_str(msg_content, msg_content_sz);
 
-    ops->ptr_sub_call_helper->call(std::string(msg_content));
+    ops->ptr_sub_call_helper->call(content_str);
 
     nng_recv_aio(ops->sock, ops->recv_aio);
   }

@@ -1,21 +1,18 @@
 #ifndef NNG_ADAPTOR_DESERIALIZER_H_
 #define NNG_ADAPTOR_DESERIALIZER_H_
 
+#include <google/protobuf/message.h>
 #include <cstdlib>
 
+namespace nng_adaptor {
 template <class M>
 M FromString(const std::string& str) {
-  return M();
-}
+  static_assert(std::is_base_of<::google::protobuf::Message, M>::value,
+		"non-supported message type!");
 
-template <>
-float FromString<float>(const std::string& str){
-  return atof(str.c_str());
+  M m;
+  m.ParseFromString(str);
+  return m;
 }
-
-template <>
-int FromString<int>(const std::string& str){
-  return atoi(str.c_str());
-}
-
+}  // namespace nng_adaptor
 #endif
