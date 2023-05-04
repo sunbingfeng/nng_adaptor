@@ -2,9 +2,25 @@ syntax = "proto3";
 
 package nng_adaptor.test;
 
-message Pose{
-    double x = 1;
-    double y = 2;
-    double yaw = 3;
+message SensorHeader{
+    double stamp = 1;
+    string name = 2;
 }
 
+message IMU{
+    SensorHeader header = 7;
+
+    double wx = 4; // angular velocity
+    double wy = 5;
+    double wz = 6;
+
+    double ax = 1; // acceleration
+    double ay = 2;
+    double az = 3; 
+}
+
+message Pose{
+    double yaw = 3;
+    double x = 1;
+    double y = 2;
+}

@@ -1,6 +1,7 @@
 #ifndef NNG_ADAPTOR_H_
 #define NNG_ADAPTOR_H_
 #include <nng_adaptor/deserializer.h>
+#include <nng_adaptor/md5_traits.h>
 #include <nng_adaptor/serializer.h>
 
 #include <nng/nng.h>
@@ -38,6 +39,10 @@ class Publisher {
                 << "nng_msg_append failed, " << nng_strerror(rv) << std::endl;
     }
 
+    // Add the md5 value
+    std::string md5 = Md5Traits<M>::md5_value();
+    nng_msg_append(msg, md5.c_str(), k_MD5_SIZE);
+
     std::string body = ToString(msg_entity);
     size_t size = body.size();
     nng_msg_append_u32(msg, size);
@@ -62,7 +67,7 @@ class NodeHandler {
   nng_listener listener_;
 
   struct SubscribeCallHelper {
-    virtual void call(const std::string&) = 0;
+    virtual void call(const std::string&, const std::string&) = 0;
   };
 
   template <class P>
@@ -76,7 +81,14 @@ class NodeHandler {
 
     SubscribeCallHelperT(const callback_t& callback) : callback_(callback){};
 
-    void call(const std::string& msg_str) override {
+    void call(const std::string& msg_md5, const std::string& msg_str) override {
+      if (msg_md5 != md5) {
+        std::cout << __func__ << "==>non matched msg received!"
+                  << "recved md5: " << msg_md5 << ", expected md5: " << md5
+                  << std::endl;
+        return;
+      }
+
       Parameter param = std::make_shared<Message const>(FromString<P>(msg_str));
       callback_(param);
     }
@@ -84,6 +96,8 @@ class NodeHandler {
 
    private:
     callback_t callback_;
+
+    const std::string md5 = Md5Traits<Message>::md5_value();
   };
 
   struct SubsriberOptions {
@@ -129,6 +143,8 @@ class NodeHandler {
       ptr_sub_call_helper =
           std::make_shared<SubscribeCallHelperT<P> >(callback);
     }
+
+    size_t topic_size() const { return topic.size() + 1 /*\0 terminator*/; }
   };
 
   std::map<std::string, SubsriberOptions> topic_to_ops_;
@@ -183,10 +199,14 @@ class NodeHandler {
     size_t real_len = nng_msg_len(msg);
     nng_msg_trim(msg, ops->topic.size() + 1);
 
+    char* msg_body = (char*)nng_msg_body(msg);
+    std::string md5(msg_body, k_MD5_SIZE);
+    nng_msg_trim(msg, k_MD5_SIZE);
+
     uint32_t msg_content_sz;
     nng_msg_trim_u32(msg, &msg_content_sz);
-    size_t expected_len = msg_content_sz + 4 /*len of 'size element'*/ +
-                          ops->topic.size() + 1 /*`\0` terminator*/;
+    size_t expected_len = ops->topic_size() + k_MD5_SIZE +
+                          4 /*len of 'size element'*/ + msg_content_sz;
     if (real_len != expected_len) {
       std::cout << __func__ << "==>"
                 << "broken msg received!" << std::endl;
@@ -197,7 +217,7 @@ class NodeHandler {
     char* msg_content = (char*)nng_msg_body(msg);
     std::string content_str(msg_content, msg_content_sz);
 
-    ops->ptr_sub_call_helper->call(content_str);
+    ops->ptr_sub_call_helper->call(md5, content_str);
 
     nng_recv_aio(ops->sock, ops->recv_aio);
   }
@@ -215,6 +235,8 @@ class NodeHandler {
                                         std::forward_as_tuple(topic),
                                         std::forward_as_tuple(topic));
     if (!result.second) {
+      std::cerr << __func__ << "==>"
+                << "Only one subscriber is allowed for one topic!" << std::endl;
       return;
     }
 

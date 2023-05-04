@@ -4,7 +4,9 @@
 #include <ctime>
 #include <memory>
 
+#include <nng_adaptor/md5_traits.h>
 #include <nng_adaptor/nng_adaptor.h>
+
 #include <proto/TestMsg.pb.h>
 
 int main(int argc, char** argv) {
@@ -19,6 +21,12 @@ int main(int argc, char** argv) {
                   << value->y() << ", " << value->yaw() << "]" << std::endl;
       });
 
+  // Subscribing to a topic with un-matched definition will fail.
+  // handler.Subscribe<nng_adaptor::test::IMU>(
+  //     "ipc:///tmp/async_demo", "testmsg_topic", [](auto value) {
+  //       std::cerr << "Wrong topic subscription!" << std::endl;
+  //     });
+
   int count = 0;
   for (;;) {
     nng_adaptor::test::Pose p;
@@ -32,6 +40,7 @@ int main(int argc, char** argv) {
     p.set_y(y);
     p.set_yaw(yaw);
     pub3.Publish(p);
+
     nng_msleep(1000);  // neither pause() nor sleep() portable
   }
 
