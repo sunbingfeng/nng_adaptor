@@ -151,7 +151,16 @@ class NodeHandler {
 
  public:
   NodeHandler() = default;
-  ~NodeHandler() = default;
+  ~NodeHandler() {
+    std::vector<std::string> all_topics;
+    for (auto& sub : topic_to_ops_) {
+      all_topics.push_back(sub.first);
+    }
+
+    for (auto& topic : all_topics) {
+      Unsubscribe(topic);
+    }
+  }
 
   struct Package {
     std::string topic;
@@ -254,6 +263,24 @@ class NodeHandler {
     }
 
     nng_recv_aio(ops.sock, ops.recv_aio);
+  }
+
+  bool Unsubscribe(const std::string topic) {
+    if (!topic_to_ops_.count(topic)) {
+      std::cout << __func__ << "==>"
+                << "Please subscribe first!" << std::endl;
+      return false;
+    }
+
+    auto& ops = topic_to_ops_.at(topic);
+    nng_socket_set(ops.sock, NNG_OPT_SUB_UNSUBSCRIBE, topic.c_str(),
+                   topic.size());
+    nng_aio_stop(ops.recv_aio);
+    nng_dialer_close(ops.dialer);
+
+    topic_to_ops_.erase(topic);
+
+    return true;
   }
 };
 
