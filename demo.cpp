@@ -12,9 +12,9 @@
 int main(int argc, char** argv) {
   std::srand(
       std::time(nullptr));  // use current time as seed for random generator
-  nng_adaptor::NodeHandler handler("ipc:///tmp/async_demo");
+  nng_adaptor::NodeHandler handler;
 
-  auto pub3 = handler.CreatePublisher<nng_adaptor::test::Pose>("testmsg_topic");
+  auto pub3 = handler.Advertise<nng_adaptor::test::Pose>("ipc:///tmp/async_demo", "testmsg_topic");
   handler.Subscribe<nng_adaptor::test::Pose>(
       "ipc:///tmp/async_demo", "testmsg_topic", [](auto value) {
         std::cout << "main==>received pose: [" << value->x() << ", "

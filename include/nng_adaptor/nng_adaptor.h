@@ -19,8 +19,30 @@ template <typename M>
 class Publisher {
  public:
   using complete_callback = std::function<void(int)>;
-  Publisher(nng_socket socket, const std::string topic)
-      : socket_(socket), topic_(topic) {}
+  Publisher(const std::string& url, const std::string topic)
+      : url_(url), topic_(topic) {
+    /*  Create the socket. */
+    int rv = nng_pub0_open(&socket_);
+    if (rv != 0) {
+      // fatal("nng_pub0_open", rv);
+      std::cout << __func__ << "==>"
+                << "nng_pub0_open failed, " << nng_strerror(rv) << std::endl;
+    }
+
+    if ((rv = nng_listener_create(&listener_, socket_, url.c_str())) != 0) {
+      // fatal("nng_listener_create", rv);
+      std::cout << __func__ << "==>"
+                << "nng_listener_create failed, " << nng_strerror(rv)
+                << std::endl;
+    }
+
+    if ((rv = nng_listener_start(listener_, 0)) != 0) {
+      // fatal("nng_listener_start", rv);
+      std::cout << __func__ << "==>"
+                << "nng_listener_start failed, " << nng_strerror(rv)
+                << std::endl;
+    }
+  }
 
   // Async interface
   void Publish(const M& msg_entity, const complete_callback& comp_cb) {}
@@ -59,13 +81,11 @@ class Publisher {
   const std::string topic_;
 
   nng_socket socket_;
+  nng_listener listener_;
 };
 
 class NodeHandler {
  private:
-  nng_socket socket_;
-  nng_listener listener_;
-
   struct SubscribeCallHelper {
     virtual void call(const std::string&, const std::string&) = 0;
   };
@@ -170,30 +190,6 @@ class NodeHandler {
     bool is_valid() const { return topic != "" && (body.size() == body_size); }
   };
 
-  NodeHandler(const std::string& url) {
-    /*  Create the socket. */
-    int rv = nng_pub0_open(&socket_);
-    if (rv != 0) {
-      // fatal("nng_pub0_open", rv);
-      std::cout << __func__ << "==>"
-                << "nng_pub0_open failed, " << nng_strerror(rv) << std::endl;
-    }
-
-    if ((rv = nng_listener_create(&listener_, socket_, url.c_str())) != 0) {
-      // fatal("nng_listener_create", rv);
-      std::cout << __func__ << "==>"
-                << "nng_listener_create failed, " << nng_strerror(rv)
-                << std::endl;
-    }
-
-    if ((rv = nng_listener_start(listener_, 0)) != 0) {
-      // fatal("nng_listener_start", rv);
-      std::cout << __func__ << "==>"
-                << "nng_listener_start failed, " << nng_strerror(rv)
-                << std::endl;
-    }
-  }
-
   static void default_callback(void* args) {
     SubsriberOptions* ops = static_cast<SubsriberOptions*>(args);
 
@@ -232,8 +228,8 @@ class NodeHandler {
   }
 
   template <typename M>
-  Publisher<M> CreatePublisher(std::string topic) {
-    return Publisher<M>(socket_, topic);
+  Publisher<M> Advertise(const std::string& url, const std::string& topic) {
+    return Publisher<M>(url, topic);
   }
 
   template <typename M>
