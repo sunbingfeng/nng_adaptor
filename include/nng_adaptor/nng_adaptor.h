@@ -1,24 +1,33 @@
 #ifndef NNG_ADAPTOR_H_
 #define NNG_ADAPTOR_H_
-#include <nng_adaptor/deserializer.h>
-#include <nng_adaptor/md5_traits.h>
-#include <nng_adaptor/serializer.h>
-
 #include <nng/nng.h>
 #include <nng/protocol/pubsub0/pub.h>
 #include <nng/protocol/pubsub0/sub.h>
 #include <nng/supplemental/util/platform.h>
+#include <nng_adaptor/deserializer.h>
+#include <nng_adaptor/md5_traits.h>
+#include <nng_adaptor/serializer.h>
+
 #include <functional>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <string>
 #include <utility>
+
+#include "thread"
 
 namespace nng_adaptor {
 template <typename M>
 class Publisher {
  public:
   using complete_callback = std::function<void(int)>;
+
+  // Use external provided socket
+  Publisher(const std::string& topic, nng_socket socket)
+      : topic_(topic), socket_(socket) {}
+
+  // Manage the socket independently, and bind it to the specified url.
   Publisher(const std::string& url, const std::string topic)
       : url_(url), topic_(topic) {
     /*  Create the socket. */
@@ -122,11 +131,13 @@ class NodeHandler {
 
   struct SubsriberOptions {
     std::string topic;
-    std::shared_ptr<SubscribeCallHelper> ptr_sub_call_helper;
+    std::vector<std::shared_ptr<SubscribeCallHelper>> callers;
 
     nng_socket sock;
     nng_aio* recv_aio;
     nng_dialer dialer;
+
+    std::mutex cb_mutex;
 
     SubsriberOptions(const std::string& _topic) : topic(_topic) {}
 
@@ -158,10 +169,10 @@ class NodeHandler {
     }
 
     template <class P>
-    void InitCallback(
+    void AddCallback(
         const typename SubscribeCallHelperT<P>::callback_t& callback) {
-      ptr_sub_call_helper =
-          std::make_shared<SubscribeCallHelperT<P> >(callback);
+      const std::lock_guard<std::mutex> lock(cb_mutex);
+      callers.push_back(std::make_shared<SubscribeCallHelperT<P>>(callback));
     }
 
     size_t topic_size() const { return topic.size() + 1 /*\0 terminator*/; }
@@ -169,8 +180,41 @@ class NodeHandler {
 
   std::map<std::string, SubsriberOptions> topic_to_ops_;
 
+  std::string publish_url_;
+  nng_listener publish_listener_;
+  nng_socket publish_socket_;
+
+  void InitPublishSocket() {
+    /*  Create the socket. */
+    int rv = nng_pub0_open(&publish_socket_);
+    if (rv != 0) {
+      // fatal("nng_pub0_open", rv);
+      std::cout << __func__ << "==>"
+                << "nng_pub0_open failed, " << nng_strerror(rv) << std::endl;
+    }
+
+    if ((rv = nng_listener_create(&publish_listener_, publish_socket_,
+                                  publish_url_.c_str())) != 0) {
+      // fatal("nng_listener_create", rv);
+      std::cout << __func__ << "==>"
+                << "nng_listener_create failed, " << nng_strerror(rv)
+                << std::endl;
+    }
+
+    if ((rv = nng_listener_start(publish_listener_, 0)) != 0) {
+      // fatal("nng_listener_start", rv);
+      std::cout << __func__ << "==>"
+                << "nng_listener_start failed, " << nng_strerror(rv)
+                << std::endl;
+    }
+  }
+
  public:
   NodeHandler() = default;
+  NodeHandler(const std::string& pub_url) : publish_url_(pub_url) {
+    InitPublishSocket();
+  }
+
   ~NodeHandler() {
     std::vector<std::string> all_topics;
     for (auto& sub : topic_to_ops_) {
@@ -222,7 +266,12 @@ class NodeHandler {
     char* msg_content = (char*)nng_msg_body(msg);
     std::string content_str(msg_content, msg_content_sz);
 
-    ops->ptr_sub_call_helper->call(md5, content_str);
+    {
+      const std::lock_guard<std::mutex> lock(ops->cb_mutex);
+      for (const auto cb : ops->callers) {
+        cb->call(md5, content_str);
+      }
+    }
 
     nng_recv_aio(ops->sock, ops->recv_aio);
   }
@@ -233,32 +282,36 @@ class NodeHandler {
   }
 
   template <typename M>
+  Publisher<M> Advertise(const std::string& topic) {
+    return Publisher<M>(topic, publish_socket_);
+  }
+
+  template <typename M>
   void Subscribe(
       const std::string& url, std::string topic,
       const std::function<void(const std::shared_ptr<M const>)> callback) {
     auto result = topic_to_ops_.emplace(std::piecewise_construct,
                                         std::forward_as_tuple(topic),
                                         std::forward_as_tuple(topic));
-    if (!result.second) {
-      std::cerr << __func__ << "==>"
-                << "Only one subscriber is allowed for one topic!" << std::endl;
-      return;
-    }
-
-    std::cout << __func__ << "==>"
-              << "topic: " << topic << ", url: " << url << std::endl;
     int rv;
-    SubsriberOptions& ops = result.first->second;
-    ops.InitComm(url);
-
-    ops.InitCallback<M>(callback);
-    if ((rv = nng_aio_alloc(&(ops.recv_aio), default_callback, &ops)) != 0) {
-      // fatal("nng_aio_alloc", rv);
+    if (result.second) {
+      // Initialize the comm for newly topic subscription
       std::cout << __func__ << "==>"
-                << "nng_aio_alloc failed, " << nng_strerror(rv) << std::endl;
+                << "topic: " << topic << ", url: " << url << std::endl;
+      SubsriberOptions& ops = result.first->second;
+      ops.InitComm(url);
+
+      if ((rv = nng_aio_alloc(&(ops.recv_aio), default_callback, &ops)) != 0) {
+        // fatal("nng_aio_alloc", rv);
+        std::cout << __func__ << "==>"
+                  << "nng_aio_alloc failed, " << nng_strerror(rv) << std::endl;
+      }
+
+      nng_recv_aio(ops.sock, ops.recv_aio);
     }
 
-    nng_recv_aio(ops.sock, ops.recv_aio);
+    SubsriberOptions& ops = result.first->second;
+    ops.AddCallback<M>(callback);
   }
 
   bool Unsubscribe(const std::string topic) {
